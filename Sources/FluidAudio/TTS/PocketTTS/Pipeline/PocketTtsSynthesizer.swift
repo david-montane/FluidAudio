@@ -88,7 +88,7 @@ public struct PocketTtsSynthesizer {
         maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk,
         language: PocketTtsLanguage = .english
     ) async throws -> SynthesisResult {
-        logger.info("PocketTTS synthesizing with custom voice: '\(text)'")
+        logger.info("PocketTTS synthesizing with custom voice")
         let genStart = Date()
 
         // Buffer the streaming output. Both APIs share one chunk loop now,
@@ -218,9 +218,28 @@ public struct PocketTtsSynthesizer {
         maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk,
         language: PocketTtsLanguage = .english
     ) async throws -> AsyncThrowingStream<AudioFrame, Error> {
+        let generator = try await makeGenerator(text: text, voiceData: voiceData,
+            temperature: temperature, seed: seed, maxTokensPerChunk: maxTokensPerChunk, language: language)
+        return makeStream(generator: generator)
+    }
+
+    /// Buffered inference stays in this task and requires EOS for every text chunk.
+    public static func synthesizePCM(text: String, voice: String, language: PocketTtsLanguage) async throws -> [Float] {
+        try Task.checkCancellation()
+        let store = try currentModelStore()
+        let voiceData = try await store.voiceData(for: voice)
+        let generator = try await makeGenerator(text: text, voiceData: voiceData,
+            temperature: PocketTtsConstants.temperature, seed: nil,
+            maxTokensPerChunk: PocketTtsConstants.maxTokensPerChunk, language: language)
+        return try await generator.generateBuffered()
+    }
+
+    private static func makeGenerator(text: String, voiceData: PocketTtsVoiceData,
+        temperature: Float, seed: UInt64?, maxTokensPerChunk: Int,
+        language: PocketTtsLanguage) async throws -> StreamingGenerator {
         let store = try currentModelStore()
 
-        logger.info("PocketTTS streaming synthesis with custom voice: '\(text)'")
+        logger.info("PocketTTS streaming synthesis with custom voice")
 
         let constants = try await store.constants()
         let chunks = chunkTextWithMetadata(
@@ -265,7 +284,7 @@ public struct PocketTtsSynthesizer {
             language: language
         )
 
-        return makeStream(generator: generator)
+        return generator
     }
 
     // MARK: - Session API
@@ -470,8 +489,18 @@ public struct PocketTtsSynthesizer {
             return result
         }
 
+        func generateBuffered() async throws -> [Float] {
+            let (stream, continuation) = AsyncThrowingStream<AudioFrame, Error>.makeStream()
+            await generate(continuation: continuation, requireEOS: true)
+            try Task.checkCancellation()
+            var samples: [Float] = []
+            for try await frame in stream { samples.append(contentsOf: frame.samples) }
+            return samples
+        }
+
         func generate(
-            continuation: AsyncThrowingStream<AudioFrame, Error>.Continuation
+            continuation: AsyncThrowingStream<AudioFrame, Error>.Continuation,
+            requireEOS: Bool = false
         ) async {
             do {
                 for (chunkIdx, chunk) in chunks.enumerated() {
@@ -481,7 +510,7 @@ public struct PocketTtsSynthesizer {
                             isMidSentence: chunk.isMidSentence,
                             language: language)
                     PocketTtsSynthesizer.logger.info(
-                        "Stream chunk \(chunkIdx + 1)/\(chunkCount): '\(normalizedChunk)'"
+                        "Stream chunk \(chunkIdx + 1)/\(chunkCount)"
                     )
 
                     let tokenIds = constants.tokenizer.encode(normalizedChunk)
@@ -540,7 +569,10 @@ public struct PocketTtsSynthesizer {
                         sequence = try PocketTtsSynthesizer.createSequenceFromLatent(latent)
                     }
 
-                    if Task.isCancelled { break }
+                    try Task.checkCancellation()
+                    if requireEOS && eosStep == nil {
+                        throw PocketTTSError.processingFailed("PocketTTS reached its frame limit before EOS")
+                    }
                 }
                 continuation.finish()
             } catch {

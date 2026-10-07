@@ -187,7 +187,7 @@ public actor PocketTtsSession {
     ) async throws {
         let (normalizedChunk, framesAfterEos) = PocketTtsSynthesizer.normalizeText(
             text, isMidSentence: isMidSentence, language: language)
-        Self.logger.info("Session chunk \(chunkIndex): '\(normalizedChunk)'")
+        Self.logger.info("Session chunk \(chunkIndex)")
 
         // Tokenize and embed
         let tokenIds = constants.tokenizer.encode(normalizedChunk)

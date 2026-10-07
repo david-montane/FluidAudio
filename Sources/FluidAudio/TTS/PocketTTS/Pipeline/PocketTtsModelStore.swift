@@ -26,6 +26,7 @@ public actor PocketTtsModelStore {
     private var condPrefillLayerKeys: PocketTtsLayerKeys?
     private var flowlmLayerKeys: PocketTtsLayerKeys?
     private var mimiDecoderKeysCache: PocketTtsMimiKeys?
+    private var localOnly = false
     private let directory: URL?
     public let language: PocketTtsLanguage
     public let precision: PocketTtsPrecision
@@ -59,6 +60,15 @@ public actor PocketTtsModelStore {
             directory: directory,
             precision: precision
         )
+        try await loadLocalModels(from: languageRoot)
+        localOnly = false
+    }
+
+    /// Load an already installed language pack without downloads or cache changes.
+    public func loadLocalModels(from languageRoot: URL) async throws {
+        guard condStepModel == nil else { return }
+        try Task.checkCancellation()
+        localOnly = true
         self.languageRootDirectory = languageRoot
 
         logger.info(
@@ -259,6 +269,11 @@ public actor PocketTtsModelStore {
         }
         guard let languageRoot = languageRootDirectory else {
             throw PocketTTSError.modelNotFound("PocketTTS repository not loaded")
+        }
+        if localOnly {
+            let data = try PocketTtsConstantsLoader.loadVoice(voice, from: languageRoot)
+            voiceCache[voice] = data
+            return data
         }
         let data = try await PocketTtsResourceDownloader.ensureVoice(
             voice,

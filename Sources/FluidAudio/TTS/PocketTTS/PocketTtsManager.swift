@@ -62,6 +62,22 @@ public actor PocketTtsManager {
         logger.notice("PocketTtsManager initialized")
     }
 
+    /// Load an installed language pack directly, without using the resource downloader.
+    public func initialize(localDirectory: URL) async throws {
+        try await modelStore.loadLocalModels(from: localDirectory)
+        try Task.checkCancellation()
+        isInitialized = true
+    }
+
+    /// Generate PCM in the caller's task. Returning or throwing means inference has stopped.
+    public func synthesizePCM(text: String, voice: String) async throws -> [Float] {
+        guard isInitialized else { throw PocketTTSError.modelNotFound("PocketTTS not initialized") }
+        let language = self.language
+        return try await PocketTtsSynthesizer.withModelStore(modelStore) {
+            try await PocketTtsSynthesizer.synthesizePCM(text: text, voice: voice, language: language)
+        }
+    }
+
     /// Synthesize text to WAV audio data.
     ///
     /// - Parameters:
