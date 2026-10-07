@@ -66,8 +66,13 @@ public actor PocketTtsModelStore {
 
     /// Load an already installed language pack without downloads or cache changes.
     public func loadLocalModels(from languageRoot: URL) async throws {
-        guard condStepModel == nil else { return }
         try Task.checkCancellation()
+        if condStepModel != nil {
+            guard localOnly, languageRootDirectory == languageRoot else {
+                throw PocketTTSError.processingFailed("PocketTTS is already loaded from another directory or download mode")
+            }
+            return
+        }
         localOnly = true
         self.languageRootDirectory = languageRoot
 
