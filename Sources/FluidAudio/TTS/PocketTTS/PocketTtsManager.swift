@@ -70,11 +70,12 @@ public actor PocketTtsManager {
     }
 
     /// Generate PCM in the caller's task. Returning or throwing means inference has stopped.
-    public func synthesizePCM(text: String, voice: String) async throws -> [Float] {
+    public func synthesizePCM(text: String, voice: String,
+        temperature: Float = PocketTtsConstants.temperature, seed: UInt64? = nil) async throws -> [Float] {
         guard isInitialized else { throw PocketTTSError.modelNotFound("PocketTTS not initialized") }
         let language = self.language
         return try await PocketTtsSynthesizer.withModelStore(modelStore) {
-            try await PocketTtsSynthesizer.synthesizePCM(text: text, voice: voice, language: language)
+            try await PocketTtsSynthesizer.synthesizePCM(text: text, voice: voice, temperature: temperature, seed: seed, language: language)
         }
     }
 

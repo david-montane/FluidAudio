@@ -224,12 +224,17 @@ public struct PocketTtsSynthesizer {
     }
 
     /// Buffered inference stays in this task and requires EOS for every text chunk.
-    public static func synthesizePCM(text: String, voice: String, language: PocketTtsLanguage) async throws -> [Float] {
+    public static func synthesizePCM(text: String, voice: String,
+        temperature: Float = PocketTtsConstants.temperature, seed: UInt64? = nil,
+        language: PocketTtsLanguage) async throws -> [Float] {
         try Task.checkCancellation()
+        guard temperature.isFinite && temperature >= 0 else {
+            throw PocketTTSError.processingFailed("PocketTTS temperature must be finite and nonnegative")
+        }
         let store = try currentModelStore()
         let voiceData = try await store.voiceData(for: voice)
         let generator = try await makeGenerator(text: text, voiceData: voiceData,
-            temperature: PocketTtsConstants.temperature, seed: nil,
+            temperature: temperature, seed: seed,
             maxTokensPerChunk: PocketTtsConstants.maxTokensPerChunk, language: language)
         return try await generator.generateBuffered()
     }
@@ -528,7 +533,16 @@ public struct PocketTtsSynthesizer {
                         useFastPrefill: useCondPrefill
                     )
 
-                    let maxGenLen = PocketTtsSynthesizer.estimateMaxFrames(text: chunk.text)
+                    let maxGenLen: Int
+                    if requireEOS {
+                        let position = kvState.positions.map { $0[0].intValue }.max() ?? PocketTtsConstants.kvCacheMaxLen
+                        guard position >= 0, position < PocketTtsConstants.kvCacheMaxLen else {
+                            throw PocketTTSError.processingFailed("PocketTTS prefill exhausted its KV cache")
+                        }
+                        maxGenLen = PocketTtsConstants.kvCacheMaxLen - position
+                    } else {
+                        maxGenLen = PocketTtsSynthesizer.estimateMaxFrames(text: chunk.text)
+                    }
                     var eosStep: Int?
                     var sequence = try PocketTtsSynthesizer.createNaNSequence()
                     let totalFramesAfterEos =
